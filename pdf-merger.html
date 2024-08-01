@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高機能PDF結合システム</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.14.0/Sortable.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f4f8;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        #drop-area {
+            border: 3px dashed #3498db;
+            border-radius: 20px;
+            width: 100%;
+            padding: 40px;
+            text-align: center;
+            background-color: #ecf0f1;
+            transition: all 0.3s ease;
+        }
+        #drop-area:hover {
+            background-color: #d6eaf8;
+        }
+        #file-list {
+            list-style-type: none;
+            padding: 0;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+        }
+        .pdf-item {
+            background-color: #fff;
+            margin: 10px;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 150px;
+            text-align: center;
+            cursor: move;
+            transition: all 0.3s ease;
+        }
+        .pdf-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+        }
+        .pdf-thumbnail {
+            width: 100px;
+            height: 141px;
+            margin: 0 auto 10px;
+            border: 1px solid #ddd;
+            background-color: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pdf-name {
+            font-size: 12px;
+            word-break: break-all;
+            margin-bottom: 5px;
+        }
+        button {
+            background-color: #3498db;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        #progress-bar {
+            width: 100%;
+            background-color: #ddd;
+            display: none;
+            margin-top: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        #progress {
+            width: 0%;
+            height: 30px;
+            background-color: #3498db;
+            text-align: center;
+            line-height: 30px;
+            color: white;
+            transition: width 0.3s ease;
+        }
+        .remove-button {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .remove-button:hover {
+            background-color: #c0392b;
+        }
+    </style>
+</head>
+<body>
+    <h1>シンプルPDF結合システム</h1>
+    <div id="drop-area">
+        <p>PDFファイルをここにドラッグ&ドロップするか、クリックしてファイルを選択してください</p>
+        <input type="file" id="fileElem" multiple accept="application/pdf" style="display:none">
+    </div>
+    <ul id="file-list"></ul>
+    <button id="merge-button" style="display:none;">PDFを結合</button>
+    <div id="progress-bar">
+        <div id="progress"></div>
+    </div>
+
+    <script>
+        let pdfs = [];
+        const dropArea = document.getElementById('drop-area');
+        const fileElem = document.getElementById('fileElem');
+        const fileList = document.getElementById('file-list');
+        const mergeButton = document.getElementById('merge-button');
+        const progressBar = document.getElementById('progress-bar');
+        const progress = document.getElementById('progress');
+
+        // ドラッグ&ドロップイベントの設定
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        dropArea.addEventListener('drop', handleDrop, false);
+        dropArea.addEventListener('click', () => fileElem.click());
+        fileElem.addEventListener('change', handleFiles);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            if (files instanceof FileList) {
+                ([...files]).forEach(uploadFile);
+            } else if (files.target && files.target.files) {
+                ([...files.target.files]).forEach(uploadFile);
+            }
+        }
+
+        async function uploadFile(file) {
+            if (file.type !== "application/pdf") {
+                alert("PDFファイルのみアップロード可能です。");
+                return;
+            }
+            const pdfData = {
+                file: file,
+                name: file.name,
+                thumbnail: await generateThumbnail(file)
+            };
+            pdfs.push(pdfData);
+            updateFileList();
+        }
+
+        async function generateThumbnail(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+            const page = await pdf.getPage(1);
+            const scale = 1;
+            const viewport = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            await page.render({ canvasContext: context, viewport }).promise;
+            return canvas.toDataURL();
+        }
+
+        function updateFileList() {
+            fileList.innerHTML = '';
+            pdfs.forEach((pdf, index) => {
+                const li = document.createElement('li');
+                li.className = 'pdf-item';
+                li.innerHTML = `
+                    <div class="pdf-thumbnail">
+                        <img src="${pdf.thumbnail}" alt="${pdf.name}" style="max-width:100%;max-height:100%;">
+                    </div>
+                    <div class="pdf-name">${pdf.name}</div>
+                    <button class="remove-button" onclick="removeFile(${index})">削除</button>
+                `;
+                fileList.appendChild(li);
+            });
+            mergeButton.style.display = pdfs.length > 1 ? 'block' : 'none';
+        }
+
+        function removeFile(index) {
+            pdfs.splice(index, 1);
+            updateFileList();
+        }
+
+        // ファイルリストのソート機能
+        new Sortable(fileList, {
+            animation: 150,
+            ghostClass: 'blue-background-class',
+            onSort: function (evt) {
+                const newIndex = evt.newIndex;
+                const oldIndex = evt.oldIndex;
+                const element = pdfs.splice(oldIndex, 1)[0];
+                pdfs.splice(newIndex, 0, element);
+            }
+        });
+
+        mergeButton.addEventListener('click', mergePDFs);
+
+        async function mergePDFs() {
+            const pdfDoc = await PDFLib.PDFDocument.create();
+            const numDocs = pdfs.length;
+
+            for (let i = 0; i < numDocs; i++) {
+                const pdf = pdfs[i].file;
+                const pdfBytes = await pdf.arrayBuffer();
+                const srcDoc = await PDFLib.PDFDocument.load(pdfBytes);
+                const copiedPages = await pdfDoc.copyPages(srcDoc, srcDoc.getPageIndices());
+                copiedPages.forEach((page) => pdfDoc.addPage(page));
+
+                // 進捗状況の更新
+                updateProgress((i + 1) / numDocs * 100);
+            }
+
+            const pdfBytes = await pdfDoc.save();
+            download(pdfBytes, "merged.pdf", "application/pdf");
+            resetProgress();
+        }
+
+        function updateProgress(percent) {
+            progressBar.style.display = 'block';
+            progress.style.width = `${percent}%`;
+            progress.textContent = `${Math.round(percent)}%`;
+        }
+
+        function resetProgress() {
+            progressBar.style.display = 'none';
+            progress.style.width = '0%';
+            progress.textContent = '';
+        }
+
+        function download(data, filename, type) {
+            const blob = new Blob([data], { type: type });
+            const link = document.createElement('a');
+            link.href = window.URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
+    </script>
+</body>
+</html>
